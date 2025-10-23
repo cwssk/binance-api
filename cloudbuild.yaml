@@ -1,0 +1,13 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "binance-api",
+        "--source=.",
+        "--region=asia-southeast1",
+        "--no-allow-unauthenticated",
+        "--project=binance-api"
+      ]
