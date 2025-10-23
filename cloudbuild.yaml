@@ -11,3 +11,6 @@ steps:
         "--no-allow-unauthenticated",
         "--project=binance-api"
       ]
+
+options:
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
