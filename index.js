@@ -1,25 +1,87 @@
 import express from "express";
 import Binance from "node-binance-api";
+import dotenv from 'dotenv';
 
+import priceRoutes from "./routes/price.js";
+import rebalanceRoutes from "./routes/rebalance.js";
+
+dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Logger middleware สำหรับทุก GET request
-app.use((req, res, next) => {
-  if (req.method === "GET") {
-    const start = Date.now();
-    console.log(
-      `--> ${req.method} ${req.originalUrl} | query=${JSON.stringify(
-        req.query
-      )} | body=${JSON.stringify(req.body)}`
-    );
-    res.on("finish", () => {
-      const duration = Date.now() - start;
-      console.log(
-        `<-- ${res.statusCode} ${req.method} ${req.originalUrl} ${duration}ms`
-      );
-    });
+// --- เพิ่ม middleware ตรวจ dev ---
+function parseBooleanVal(v) {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true') return true;
+    if (s === 'false') return false;
   }
+  return false; // ไม่สามารถแปลง
+}
+
+app.use((req, res, next) => {
+  const source = (req.method === 'GET' || req.method === 'DELETE') ? req.query : req.body;
+  req.isDev = parseBooleanVal(source?.dev);
+  next();
+});
+
+// Logger middleware with colors
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  // ANSI color codes
+  const colors = {
+    reset: "\x1b[0m",
+    bright: "\x1b[1m",
+    dim: "\x1b[2m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    magenta: "\x1b[35m",
+    red: "\x1b[31m",
+    cyan: "\x1b[36m",
+    white: "\x1b[37m",
+  };
+
+  // เลือกสีตาม HTTP method
+  let methodColor = colors.white;
+  switch (req.method) {
+    case "GET":
+      methodColor = colors.green;
+      break;
+    case "POST":
+      methodColor = colors.blue;
+      break;
+    case "PUT":
+      methodColor = colors.yellow;
+      break;
+    case "DELETE":
+      methodColor = colors.red;
+      break;
+    default:
+      methodColor = colors.cyan;
+  }
+
+  console.log(
+    `${colors.bright}${methodColor}--> ${req.method} ${req.originalUrl}${colors.reset} | query=${JSON.stringify(
+      req.query
+    )} | body=${JSON.stringify(req.body)} | dev=${req.isDev}`
+  );
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    // สีของ status code: 2xx=green, 4xx=yellow, 5xx=red
+    let statusColor = colors.white;
+    if (res.statusCode >= 500) statusColor = colors.red;
+    else if (res.statusCode >= 400) statusColor = colors.yellow;
+    else if (res.statusCode >= 200) statusColor = colors.green;
+
+    console.log(
+      `${statusColor}<-- ${res.statusCode} ${req.method} ${req.originalUrl} ${duration}ms${colors.reset}`
+    );
+  });
+
   next();
 });
 
@@ -30,18 +92,9 @@ const binance = new Binance().options({
   recvWindow: 60000, // กัน timeout
 });
 
-// ✅ ตัวอย่าง endpoint: ดึงราคาล่าสุดของคู่เหรียญ
-app.get("/price/:symbol", async (req, res) => {
-  try {
-    const symbol = req.params.symbol.toUpperCase();
-    const ticker = await binance.prices(symbol);
-    console.log(`Price fetched for ${symbol}: ${ticker[symbol]}`);
-    res.json({ symbol, price: ticker[symbol] });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// ✅ ผูก router
+app.use("/price", priceRoutes(binance));
+app.use("/rebalance", rebalanceRoutes(binance));
 
 // ✅ root route (ไว้ทดสอบ)
 app.get("/", (req, res) => {
