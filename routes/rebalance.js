@@ -3,9 +3,63 @@ import express from "express";
 export default function (binance) {
   const router = express.Router();
 
+  // -----------------------------
+  // 🧩 Helper: Adjust to step size
+  // -----------------------------
+  function adjustToStepSize(value, stepSize) {
+    const precision = Math.round(-Math.log10(stepSize));
+    const adjusted = Math.round(value / stepSize) * stepSize;
+    return Number(adjusted.toFixed(precision));
+  }
+
+  // -------------------------------------
+  // 🪙 Helper: Redeem from Simple Earn API
+  // -------------------------------------
+  async function getSimpleEarnProductId(binance, asset) {
+    const products = await binance.sapiRequest(
+      "GET",
+      "/sapi/v1/simple-earn/flexible/list",
+      { asset }
+    );
+
+    if (products.rows?.length > 0) {
+      return products.rows[0].productId;
+    } else {
+      throw new Error(`Product ID not found for ${asset}`);
+    }
+  }
+
+  async function redeemFromEarn(binance, asset, amount) {
+    try {
+      const productId = await getSimpleEarnProductId(binance, asset);
+
+      const result = await binance.sapiRequest(
+        "POST",
+        "/sapi/v1/simple-earn/flexible/redeem",
+        { productId, amount }
+      );
+
+      console.log(`✅ Redeemed ${amount} ${asset} from Simple Earn`);
+      return result;
+    } catch (err) {
+      console.error(`❌ Failed to redeem ${asset}:`, err.body || err.message);
+      throw err;
+    }
+  }
+
+  // ---------------------------
+  // 📈 Main route: /rebalance
+  // ---------------------------
   router.post("/", async (req, res) => {
     try {
       const { base_asset, quote_asset, base_asset_qty, quote_asset_qty } = req.body;
+
+      // ✅ ตรวจ dev mode จากทั้ง req.isDev และ environment variable
+      const isDev =
+        req.isDev === true ||
+        process.env.NODE_ENV === "development";
+
+      console.log(`\n🌍 Environment: ${isDev ? "DEV" : "PROD"}`);
 
       if (!base_asset || !quote_asset || base_asset_qty == null || quote_asset_qty == null) {
         return res.status(400).json({ error: "Missing required parameters." });
@@ -40,16 +94,44 @@ export default function (binance) {
         diff_value = 0;
       }
 
+      // ✅ ตรวจ stepSize จาก exchangeInfo
+      if (amount > 0) {
+        const info = await binance.exchangeInfo(symbol);
+        const lotSize = info.symbols[0].filters.find(f => f.filterType === "LOT_SIZE");
+        if (lotSize && lotSize.stepSize) {
+          const stepSize = parseFloat(lotSize.stepSize);
+          const original = amount;
+          amount = adjustToStepSize(amount, stepSize);
+
+          if (original !== amount) {
+            console.log(`[adjustToStepSize] ${symbol}: ${original} → ${amount} (stepSize=${stepSize})`);
+          }
+        }
+      }
+
       const MAX_TRADE_VALUE_USD = parseFloat(process.env.MAX_TRADE_VALUE_USD || "100");
       const overLimit = diff_value > MAX_TRADE_VALUE_USD;
 
+      // -----------------------------------
+      // 💰 Execute trade (with Earn redeem)
+      // -----------------------------------
       if (action !== "BALANCED" && amount > 0 && !overLimit) {
-        if (req.isDev) {
+        if (isDev) {
           console.log(`[DEV MODE] Would ${action.includes("SELL") ? "sell" : "buy"} ${amount} ${base_asset}`);
         } else {
           if (action === "SELL_BASE_BUY_QUOTE") {
+            // ถอน base_asset จาก Binance Earn ก่อนขาย
+            await redeemFromEarn(binance, base_asset, amount);
+            await new Promise(r => setTimeout(r, 5000)); // รอ 5 วิ
             trade_result = await binance.marketSell(symbol, amount);
-          } else {
+          } else if (action === "BUY_BASE_SELL_QUOTE") {
+            // ถอน quote_asset จาก Binance Earn ก่อนซื้อ
+            const needed_quote = amount * price;
+            const redeem_amount = needed_quote * 1.1; // +10% buffer
+            console.log(`🔄 Need ${needed_quote} ${quote_asset}, redeeming ${redeem_amount}`);
+
+            await redeemFromEarn(binance, quote_asset, redeem_amount);
+            await new Promise(r => setTimeout(r, 5000)); // รอ 5 วิ
             trade_result = await binance.marketBuy(symbol, amount);
           }
         }
@@ -71,10 +153,10 @@ export default function (binance) {
         trade_value: diff_value,
         trade_over_limit: overLimit,
         trade_limit_usd: MAX_TRADE_VALUE_USD,
-        dev_mode: req.isDev,
+        dev_mode: isDev,
         trade_result: overLimit
           ? "❌ Skipped (over limit)"
-          : req.isDev
+          : isDev
           ? "Simulated trade (no order sent)"
           : trade_result,
       });
