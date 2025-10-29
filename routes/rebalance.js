@@ -16,10 +16,10 @@ export default function (binance) {
   // 🪙 Helper: Redeem from Simple Earn API
   // -------------------------------------
   async function getSimpleEarnProductId(binance, asset) {
-    const products = await binance.sapiRequest(
-      "GET",
+    const products = await binance.privateSapiRequest(
       "/sapi/v1/simple-earn/flexible/list",
-      { asset }
+      { asset },
+      "GET"
     );
 
     if (products.rows?.length > 0) {
@@ -33,10 +33,10 @@ export default function (binance) {
     try {
       const productId = await getSimpleEarnProductId(binance, asset);
 
-      const result = await binance.sapiRequest(
-        "POST",
+      const result = await binance.privateSapiRequest(
         "/sapi/v1/simple-earn/flexible/redeem",
-        { productId, amount }
+        { productId, amount },
+        "POST"
       );
 
       console.log(`✅ Redeemed ${amount} ${asset} from Simple Earn`);
@@ -164,6 +164,48 @@ export default function (binance) {
     } catch (error) {
       console.error("Rebalance error:", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Add this before the return router at the end
+  router.post("/test-redeem", async (req, res) => {
+    try {
+      const { asset, amount } = req.body;
+
+      if (!asset || !amount) {
+        return res.status(400).json({ 
+          error: "Missing required parameters. Please provide asset and amount." 
+        });
+      }
+
+      // Check if in dev mode
+      const isDev = req.isDev === true;
+      console.log(`\n🌍 Environment: ${isDev ? "DEV" : "PROD"}`);
+
+      if (isDev) {
+        console.log(`[DEV MODE] Would redeem ${amount} ${asset} from Simple Earn`);
+        return res.json({
+          message: "Test mode - no actual redemption",
+          asset,
+          amount
+        });
+      }
+
+      const result = await redeemFromEarn(binance, asset, amount);
+      
+      res.json({
+        success: true,
+        asset,
+        amount,
+        result
+      });
+
+    } catch (error) {
+      console.error("Redeem test error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.body
+      });
     }
   });
 
