@@ -1,5 +1,5 @@
 import express from "express";
-import Binance from "node-binance-api";
+import { Spot } from '@binance/connector';
 import dotenv from 'dotenv';
 
 import priceRoutes from "./routes/price.js";
@@ -85,16 +85,33 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ ตั้งค่า Binance API (ใส่ key จริงผ่าน environment variable)
-const binance = new Binance().options({
-  APIKEY: process.env.BINANCE_API_KEY,
-  APISECRET: process.env.BINANCE_API_SECRET,
-  recvWindow: 60000, // กัน timeout
-});
+// ✅ ตั้งค่า Binance API with additional options
+const client = new Spot(
+  process.env.BINANCE_API_KEY,
+  process.env.BINANCE_API_SECRET,
+  {
+    baseURL: 'https://api.binance.com',
+    recvWindow: 60000, // เพิ่มเวลารอการตอบกลับ
+    timeout: 1000 * 60, // timeout 60 วินาที
+    httpsAgent: undefined, // ใช้ default https agent
+    proxy: false, // ไม่ใช้ proxy
+    defaultType: 'SPOT', // default trading type
+    logger: {
+      debug: (msg) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[Binance Debug]:', msg);
+        }
+      },
+      log: (msg) => console.log('[Binance]:', msg),
+      warn: (msg) => console.warn('[Binance Warning]:', msg),
+      error: (msg) => console.error('[Binance Error]:', msg)
+    }
+  }
+);
 
 // ✅ ผูก router
-app.use("/price", priceRoutes(binance));
-app.use("/rebalance", rebalanceRoutes(binance));
+app.use("/price", priceRoutes(client));
+app.use("/rebalance", rebalanceRoutes(client));
 
 // ✅ root route (ไว้ทดสอบ)
 app.get("/", (req, res) => {

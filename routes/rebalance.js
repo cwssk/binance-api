@@ -1,6 +1,12 @@
 import express from "express";
+import { 
+  getFlexibleProducts, 
+  redeemFlexibleSavings,
+  marketBuy,
+  marketSell 
+} from "../libs/binanceApi.js";
 
-export default function (binance) {
+export default function (client) {
   const router = express.Router();
 
   // -----------------------------
@@ -15,34 +21,29 @@ export default function (binance) {
   // -------------------------------------
   // 🪙 Helper: Redeem from Simple Earn API
   // -------------------------------------
-  async function getSimpleEarnProductId(binance, asset) {
-    const products = await binance.privateSapiRequest(
-      "/sapi/v1/simple-earn/flexible/list",
-      { asset },
-      "GET"
-    );
-
-    if (products.rows?.length > 0) {
-      return products.rows[0].productId;
-    } else {
+  async function getSimpleEarnProductId(client, asset) {
+    try {
+      const products = await getFlexibleProducts(client, asset);
+      
+      if (products.rows?.length > 0) {
+        return products.rows[0].productId;
+      }
       throw new Error(`Product ID not found for ${asset}`);
+    } catch (error) {
+      console.error(`❌ Failed to get product ID for ${asset}:`, error);
+      throw error;
     }
   }
 
-  async function redeemFromEarn(binance, asset, amount) {
+  async function redeemFromEarn(client, asset, amount) {
     try {
-      const productId = await getSimpleEarnProductId(binance, asset);
-
-      const result = await binance.privateSapiRequest(
-        "/sapi/v1/simple-earn/flexible/redeem",
-        { productId, amount },
-        "POST"
-      );
-
+      const productId = await getSimpleEarnProductId(client, asset);
+      const result = await redeemFlexibleSavings(client, productId, amount);
+      
       console.log(`✅ Redeemed ${amount} ${asset} from Simple Earn`);
       return result;
     } catch (err) {
-      console.error(`❌ Failed to redeem ${asset}:`, err.body || err.message);
+      console.error(`❌ Failed to redeem ${asset}:`, err);
       throw err;
     }
   }
@@ -66,8 +67,8 @@ export default function (binance) {
       }
 
       const symbol = `${base_asset}${quote_asset}`.toUpperCase();
-      const ticker = await binance.prices(symbol);
-      const price = parseFloat(ticker[symbol]);
+      const tickerResponse = await client.tickerPrice(symbol);
+      const price = parseFloat(tickerResponse.data.price);
 
       if (isNaN(price)) {
         return res.status(400).json({ error: `Invalid trading pair: ${symbol}` });
@@ -77,6 +78,7 @@ export default function (binance) {
       const quote_value = parseFloat(quote_asset_qty);
       const total_value = base_value + quote_value;
       const target_each = total_value / 2;
+      console.log(`base_value: ${base_value} VS quote_value: ${quote_value} | total: ${total_value} | target_each: ${target_each}`);
 
       let action, amount, diff_value, trade_result = null;
 
@@ -96,8 +98,9 @@ export default function (binance) {
 
       // ✅ ตรวจ stepSize จาก exchangeInfo
       if (amount > 0) {
-        const info = await binance.exchangeInfo(symbol);
-        const lotSize = info.symbols[0].filters.find(f => f.filterType === "LOT_SIZE");
+        const exchangeInfo = await client.exchangeInfo({ symbol });
+        const symbolInfo = exchangeInfo.data.symbols[0];
+        const lotSize = symbolInfo.filters.find(f => f.filterType === "LOT_SIZE");
         if (lotSize && lotSize.stepSize) {
           const stepSize = parseFloat(lotSize.stepSize);
           const original = amount;
@@ -117,22 +120,19 @@ export default function (binance) {
       // -----------------------------------
       if (action !== "BALANCED" && amount > 0 && !overLimit) {
         if (isDev) {
-          console.log(`[DEV MODE] Would ${action.includes("SELL") ? "sell" : "buy"} ${amount} ${base_asset}`);
+          console.log(`[DEV MODE] Would ${action === "SELL_BASE_BUY_QUOTE" ? "sell" : "buy"} ${amount} ${base_asset}`);
         } else {
           if (action === "SELL_BASE_BUY_QUOTE") {
-            // ถอน base_asset จาก Binance Earn ก่อนขาย
-            await redeemFromEarn(binance, base_asset, amount);
-            await new Promise(r => setTimeout(r, 5000)); // รอ 5 วิ
-            trade_result = await binance.marketSell(symbol, amount);
+            console.log(`🔄 Redeeming ${amount} ${base_asset}`);
+            await redeemFromEarn(client, base_asset, amount);
+            await new Promise(r => setTimeout(r, 5000));
+            trade_result = await marketSell(client, symbol, amount);
           } else if (action === "BUY_BASE_SELL_QUOTE") {
-            // ถอน quote_asset จาก Binance Earn ก่อนซื้อ
-            const needed_quote = amount * price;
-            const redeem_amount = needed_quote * 1.1; // +10% buffer
-            console.log(`🔄 Need ${needed_quote} ${quote_asset}, redeeming ${redeem_amount}`);
-
-            await redeemFromEarn(binance, quote_asset, redeem_amount);
-            await new Promise(r => setTimeout(r, 5000)); // รอ 5 วิ
-            trade_result = await binance.marketBuy(symbol, amount);
+            const needed_quote = amount * price;  // แปลงจำนวน base เป็นมูลค่า quote
+            console.log(`🔄 Redeeming ${needed_quote} ${quote_asset}`);
+            await redeemFromEarn(client, quote_asset, needed_quote);
+            await new Promise(r => setTimeout(r, 5000));
+            trade_result = await marketBuy(client, symbol, needed_quote);
           }
         }
       }
@@ -162,12 +162,17 @@ export default function (binance) {
       });
 
     } catch (error) {
-      console.error("Rebalance error:", error);
-      res.status(500).json({ error: error.message });
+      console.error("❌ Rebalance error:", error);
+      res.status(500).json({ 
+        success: false,
+        error: error.message,
+        details: error.response?.data || error.stack,
+        timestamp: Date.now()
+      });
     }
   });
 
-  // Add this before the return router at the end
+  // Update test-redeem route
   router.post("/test-redeem", async (req, res) => {
     try {
       const { asset, amount } = req.body;
@@ -191,7 +196,7 @@ export default function (binance) {
         });
       }
 
-      const result = await redeemFromEarn(binance, asset, amount);
+      const result = await redeemFromEarn(client, asset, amount);
       
       res.json({
         success: true,
@@ -204,7 +209,7 @@ export default function (binance) {
       console.error("Redeem test error:", error);
       res.status(500).json({ 
         error: error.message,
-        details: error.body
+        details: error.response?.data || error.stack
       });
     }
   });
