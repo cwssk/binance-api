@@ -56,9 +56,10 @@ export default function (client) {
       const { base_asset, quote_asset, base_asset_qty, quote_asset_qty } = req.body;
 
       // ✅ ตรวจ dev mode จากทั้ง req.isDev และ environment variable
-      const isDev =
-        req.isDev === true ||
-        process.env.NODE_ENV === "development";
+      // const isDev =
+      //   req.isDev === true ||
+      //   process.env.NODE_ENV === "development";
+      const isDev = false; // ปิด dev mode ชั่วคราว
 
       console.log(`\n🌍 Environment: ${isDev ? "DEV" : "PROD"}`);
 
@@ -78,6 +79,7 @@ export default function (client) {
       const quote_value = parseFloat(quote_asset_qty);
       const total_value = base_value + quote_value;
       const target_each = total_value / 2;
+      console.log(`base_asset_qty: ${base_asset_qty} ${base_asset} @ ${price} = ${base_value} ${quote_asset}`);
       console.log(`base_value: ${base_value} VS quote_value: ${quote_value} | total: ${total_value} | target_each: ${target_each}`);
 
       let action, amount, diff_value, trade_result = null;
@@ -85,11 +87,11 @@ export default function (client) {
       if (base_value > target_each) {
         diff_value = base_value - target_each;
         amount = diff_value / price;
-        action = "SELL_BASE_BUY_QUOTE";
+        action = "SELL";
       } else if (quote_value > target_each) {
         diff_value = target_each - base_value;
         amount = diff_value / price;
-        action = "BUY_BASE_SELL_QUOTE";
+        action = "BUY";
       } else {
         action = "BALANCED";
         amount = 0;
@@ -120,20 +122,77 @@ export default function (client) {
       // -----------------------------------
       if (action !== "BALANCED" && amount > 0 && !overLimit) {
         if (isDev) {
-          console.log(`[DEV MODE] Would ${action === "SELL_BASE_BUY_QUOTE" ? "sell" : "buy"} ${amount} ${base_asset}`);
+          console.log(`[DEV MODE] Simulated trade (no order sent)`);
         } else {
-          if (action === "SELL_BASE_BUY_QUOTE") {
-            console.log(`🔄 Redeeming ${amount} ${base_asset}`);
-            await redeemFromEarn(client, base_asset, amount);
-            await new Promise(r => setTimeout(r, 5000));
-            trade_result = await marketSell(client, symbol, amount);
-          } else if (action === "BUY_BASE_SELL_QUOTE") {
-            const needed_quote = amount * price;  // แปลงจำนวน base เป็นมูลค่า quote
-            console.log(`🔄 Redeeming ${needed_quote} ${quote_asset}`);
-            await redeemFromEarn(client, quote_asset, needed_quote);
-            await new Promise(r => setTimeout(r, 5000));
-            trade_result = await marketBuy(client, symbol, needed_quote);
+          if (action === "SELL") {
+            console.log(`Inteded: ${action} | Amount: ${amount} ${base_asset} @ ${price} | Value: ${amount * price} ${quote_asset}`);
+            // console.log(`🔄 Redeeming ${amount} ${base_asset}`);
+            // await redeemFromEarn(client, base_asset, amount);
+            // await new Promise(r => setTimeout(r, 5000));
+            // trade_result = await marketSell(client, symbol, amount);
+            trade_result = {
+              "symbol": "BTCUSDT",
+              "orderId": 8448418,
+              "orderListId": -1,
+              "clientOrderId": "VHNp5iD7mI4g8rQj9UP2Ph",
+              "transactTime": 1761927672752,
+              "price": "0.00000000",
+              "origQty": "0.00024000",
+              "executedQty": "0.00024000",
+              "origQuoteOrderQty": "0.00000000",
+              "cummulativeQuoteQty": "26.36562720",
+              "status": "FILLED",
+              "timeInForce": "GTC",
+              "type": "MARKET",
+              "side": "SELL",
+              "workingTime": 1761927672752,
+              "fills": [
+                {
+                  "price": "109856.78000000",
+                  "qty": "0.00024000",
+                  "commission": "0.00000000",
+                  "commissionAsset": "USDT",
+                  "tradeId": 3930762
+                }
+              ],
+              "selfTradePreventionMode": "EXPIRE_MAKER"
+            };
+          } else if (action === "BUY") {
+            console.log(`Inteded: ${action} | Amount: ${amount} ${base_asset} @ ${price} | Value: ${amount * price} ${quote_asset}`);
+            // const needed_quote = amount * price;  // แปลงจำนวน base เป็นมูลค่า quote
+            // console.log(`🔄 Redeeming ${needed_quote} ${quote_asset}`);
+            // await redeemFromEarn(client, quote_asset, needed_quote);
+            // await new Promise(r => setTimeout(r, 5000));
+            // trade_result = await marketBuy(client, symbol, needed_quote);
+            trade_result = {
+              "symbol": "BTCUSDT",
+              "orderId": 8447928,
+              "orderListId": -1,
+              "clientOrderId": "c70UBog0BieekNnGMozEHL",
+              "transactTime": 1761927561654,
+              "price": "0.00000000",
+              "origQty": "0.00022000",
+              "executedQty": "0.00022000",
+              "origQuoteOrderQty": "25.00000000",
+              "cummulativeQuoteQty": "24.17513780",
+              "status": "FILLED",
+              "timeInForce": "GTC",
+              "type": "MARKET",
+              "side": "BUY",
+              "workingTime": 1761927561654,
+              "fills": [
+                {
+                  "price": "109886.99000000",
+                  "qty": "0.00022000",
+                  "commission": "0.00000000",
+                  "commissionAsset": "BTC",
+                  "tradeId": 3930569
+                }
+              ],
+              "selfTradePreventionMode": "EXPIRE_MAKER"
+            };
           }
+          console.log(`Actual: ${action} | Amount: ${trade_result.executedQty} ${base_asset} @ ${trade_result.cummulativeQuoteQty / trade_result.executedQty} | Value: ${trade_result.cummulativeQuoteQty} ${quote_asset}`);
         }
       }
 
@@ -168,92 +227,6 @@ export default function (client) {
         error: error.message,
         details: error.response?.data || error.stack,
         timestamp: Date.now()
-      });
-    }
-  });
-
-  // Update test-redeem route
-  router.post("/test-redeem", async (req, res) => {
-    try {
-      const { asset, amount } = req.body;
-
-      if (!asset || !amount) {
-        return res.status(400).json({ 
-          error: "Missing required parameters. Please provide asset and amount." 
-        });
-      }
-
-      // Check if in dev mode
-      const isDev = req.isDev === true;
-      console.log(`\n🌍 Environment: ${isDev ? "DEV" : "PROD"}`);
-
-      if (isDev) {
-        console.log(`[DEV MODE] Would redeem ${amount} ${asset} from Simple Earn`);
-        return res.json({
-          message: "Test mode - no actual redemption",
-          asset,
-          amount
-        });
-      }
-
-      const result = await redeemFromEarn(client, asset, amount);
-      
-      res.json({
-        success: true,
-        asset,
-        amount,
-        result
-      });
-
-    } catch (error) {
-      console.error("Redeem test error:", error);
-      res.status(500).json({ 
-        error: error.message,
-        details: error.response?.data || error.stack
-      });
-    }
-  });
-
-  router.post("/test-buy", async (req, res) => {
-    try {
-      const { symbol, quantity } = req.body;
-
-      const result = await marketBuy(client, symbol, quantity);
-      
-      res.json({
-        success: true,
-        symbol,
-        quantity,
-        result
-      });
-
-    } catch (error) {
-      console.error("Buy test error:", error);
-      res.status(500).json({ 
-        error: error.message,
-        details: error.response?.data || error.stack
-      });
-    }
-  });
-
-  router.post("/test-sell", async (req, res) => {
-    try {
-      const { symbol, quantity } = req.body;
-
-      const result = await marketSell(client, symbol, quantity);
-      
-      res.json({
-        success: true,
-        symbol,
-        quantity,
-        result
-      });
-
-    } catch (error) {
-      console.error("Sell test error:", error);
-      res.status(500).json({ 
-        error: error.message,
-        details: error.response?.data || error.stack
       });
     }
   });

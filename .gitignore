@@ -3,3 +3,6 @@ node_modules
 
 # test files
 test.js
+testbuy.json
+testsell.json
+rebalance-test-functions.js
