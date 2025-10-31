@@ -90,7 +90,7 @@ const client = new Spot(
   process.env.BINANCE_API_KEY,
   process.env.BINANCE_API_SECRET,
   {
-    baseURL: 'https://api.binance.com',
+    baseURL: process.env.NODE_ENV === "development"? 'https://testnet.binance.vision' : 'https://api.binance.com',
     recvWindow: 60000, // เพิ่มเวลารอการตอบกลับ
     timeout: 1000 * 60, // timeout 60 วินาที
     httpsAgent: undefined, // ใช้ default https agent

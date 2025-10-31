@@ -214,5 +214,49 @@ export default function (client) {
     }
   });
 
+  router.post("/test-buy", async (req, res) => {
+    try {
+      const { symbol, quantity } = req.body;
+
+      const result = await marketBuy(client, symbol, quantity);
+      
+      res.json({
+        success: true,
+        symbol,
+        quantity,
+        result
+      });
+
+    } catch (error) {
+      console.error("Buy test error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error.stack
+      });
+    }
+  });
+
+  router.post("/test-sell", async (req, res) => {
+    try {
+      const { symbol, quantity } = req.body;
+
+      const result = await marketSell(client, symbol, quantity);
+      
+      res.json({
+        success: true,
+        symbol,
+        quantity,
+        result
+      });
+
+    } catch (error) {
+      console.error("Sell test error:", error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || error.stack
+      });
+    }
+  });
+
   return router;
 }
